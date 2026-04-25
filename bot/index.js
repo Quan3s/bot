@@ -1,119 +1,142 @@
 const mineflayer = require('mineflayer');
 
 let bot = null;
-let chatInterval = null;
+let chatTimeout = null;
 let actionInterval = null;
+let reconnectTimeout = null;
 
 const chatMessages = [
-    "tôi là bot AFK", 
-    "hello", 
-    "chào", 
-    "hi", 
-    "tôi là bot", 
-    "chào mọi người nha"
+    "Chán quá ai đây không :((",
+    "Đứng đây ngắm mây bay cả ngày rồi nè",
+    "Server vắng quá, ai vào chơi với mình đi",
+    "Bot AFK xin chào mọi người",
+    "Có ai online không nhỉ?",
+    "Ngồi một mình thấy buồn quá",
+    "Mình vẫn ở đây này, đừng lo server die nhé",
+    "Đếm block chơi cho đỡ buồn :))",
+    "Server hôm nay vắng tanh",
+    "Ai đọc được thì vào chơi đi",
+    "Đang AFK nhưng vẫn để mắt tới server",
+    "Hóng ai đó vào build cùng",
+    "Chỉ cần 1 người thôi, vào đi :(",
+    "Mình là bot giữ server ấm nè",
+    "Có mình tôi với tôi thôi..."
 ];
 
 function startBot(config, emitLog) {
-    // Xóa bot cũ nếu có để giải phóng RAM
+    // Xóa sạch các tiến trình cũ trước khi khởi động
+    clearAllTimers();
     if (bot) {
         bot.quit();
-        cleanup();
         bot = null;
     }
 
-    emitLog(`[System] Đang kết nối tới ${config.host}:${config.port} | Bot: ${config.username}`);
+    emitLog(`[System] Đang kết nối tới ${config.host}:${config.port}...`);
 
     bot = mineflayer.createBot({
         host: config.host,
         port: parseInt(config.port),
         username: config.username,
         version: '1.20.1',
-        viewDistance: 2 // Tối ưu cực quan trọng cho Render (Render distance = 2)
+        viewDistance: 2, // Quan trọng để chạy được trên 512MB RAM
     });
 
     bot.on('login', () => {
-        emitLog(`[Bot] Đã vào máy chủ. Đang chờ AuthMe...`);
+        emitLog(`[Bot] Đã đăng nhập vào máy chủ.`);
     });
 
     bot.on('spawn', () => {
-        emitLog(`[Bot] Đã spawn thành công.`);
-
-        // 1. Xử lý AuthMe
+        emitLog(`[Bot] Đã xuất hiện tại thế giới.`);
+        
+        // Thực hiện lệnh AuthMe
         setTimeout(() => {
             if (config.isRegister) {
                 bot.chat(`/register ${config.password} ${config.password}`);
-                emitLog(`[AuthMe] Đã gửi lệnh Đăng Ký.`);
+                emitLog(`[AuthMe] Đã gửi: /register [MK] [MK]`);
             } else {
                 bot.chat(`/login ${config.password}`);
-                emitLog(`[AuthMe] Đã gửi lệnh Đăng Nhập.`);
+                emitLog(`[AuthMe] Đã gửi: /login [MK]`);
             }
-        }, 2000); // Đợi 2s cho server load plugin
+        }, 3000);
 
-        // 2. Vòng lặp Chat (2 - 4 phút / lần)
-        if (chatInterval) clearInterval(chatInterval);
-        chatInterval = setInterval(() => {
-            const msg = chatMessages[Math.floor(Math.random() * chatMessages.length)];
-            bot.chat(msg);
-            emitLog(`[Bot Chat] ${msg}`);
-        }, 120000 + Math.random() * 120000);
-
-        // 3. Vòng lặp Hành động: Nhảy & Quay mặt ngẫu nhiên (10 - 20 giây / lần)
-        if (actionInterval) clearInterval(actionInterval);
-        actionInterval = setInterval(() => {
-            // Nhảy
-            bot.setControlState('jump', true);
-            setTimeout(() => bot.setControlState('jump', false), 300);
-
-            // Quay mặt đi chỗ khác (yaw: hướng ngang, pitch: hướng dọc)
-            const randomYaw = Math.random() * Math.PI * 2; 
-            const randomPitch = (Math.random() * Math.PI) - (Math.PI / 2); 
-            bot.look(randomYaw, randomPitch, true);
-        }, 10000 + Math.random() * 10000);
+        startChatCycle(emitLog);
+        startActionCycle();
     });
 
-    bot.on('death', () => {
-        emitLog(`[Bot] Đã ngã xuống! Đang auto respawn...`);
-        bot.chat('/respawn'); // Gửi lệnh phụ trợ
-    });
-
-    bot.on('end', (reason) => {
-        emitLog(`[System] Mất kết nối: ${reason}`);
-        cleanup();
-        
-        if (config.autoReconnect) {
-            emitLog(`[System] Auto Reconnect sau 10 giây...`);
-            setTimeout(() => startBot(config, emitLog), 10000);
-        }
+    bot.on('kicked', (reason) => {
+        const msg = typeof reason === 'string' ? reason : JSON.stringify(reason);
+        emitLog(`[Bị Kick] Lý do: ${msg}`);
     });
 
     bot.on('error', (err) => {
-        emitLog(`[Error] ${err.message}`);
+        emitLog(`[Lỗi] ${err.message}`);
     });
 
-    // Dọn dẹp tiến trình ẩn để tránh tràn RAM
-    function cleanup() {
-        if (chatInterval) clearInterval(chatInterval);
-        if (actionInterval) clearInterval(actionInterval);
-    }
+    bot.on('end', (reason) => {
+        emitLog(`[System] Mất kết nối. Lý do: ${reason}`);
+        clearAllTimers();
+
+        if (config.autoReconnect) {
+            emitLog(`[System] Sẽ kết nối lại sau 15 giây...`);
+            reconnectTimeout = setTimeout(() => {
+                startBot(config, emitLog);
+            }, 15000);
+        }
+    });
+
+    bot.on('death', () => {
+        emitLog(`[Bot] Đã chết. Đang hồi sinh...`);
+        bot.chat('/respawn');
+    });
+}
+
+function startChatCycle(emitLog) {
+    if (chatTimeout) clearTimeout(chatTimeout);
+    
+    const loop = () => {
+        const msg = chatMessages[Math.floor(Math.random() * chatMessages.length)];
+        if (bot && bot.entity) {
+            bot.chat(msg);
+            emitLog(`[Chat] ${msg}`);
+        }
+        // Random từ 60s đến 180s
+        const next = Math.floor(Math.random() * (180000 - 60000) + 60000);
+        chatTimeout = setTimeout(loop, next);
+    };
+    chatTimeout = setTimeout(loop, 60000);
+}
+
+function startActionCycle() {
+    if (actionInterval) clearInterval(actionInterval);
+    actionInterval = setInterval(() => {
+        if (!bot || !bot.entity) return;
+        
+        // Nhảy ngẫu nhiên
+        if (Math.random() > 0.6) {
+            bot.setControlState('jump', true);
+            setTimeout(() => bot.setControlState('jump', false), 200);
+        }
+
+        // Quay mặt ngẫu nhiên
+        const yaw = Math.random() * Math.PI * 2;
+        const pitch = (Math.random() - 0.5) * Math.PI;
+        bot.look(yaw, pitch, false);
+    }, 12000);
+}
+
+function clearAllTimers() {
+    if (chatTimeout) clearTimeout(chatTimeout);
+    if (actionInterval) clearInterval(actionInterval);
+    if (reconnectTimeout) clearTimeout(reconnectTimeout);
 }
 
 function stopBot(emitLog) {
+    clearAllTimers();
     if (bot) {
         bot.quit();
         bot = null;
-        emitLog(`[System] Đã ngắt kết nối bot thủ công.`);
-    } else {
-        emitLog(`[System] Bot hiện không hoạt động.`);
+        emitLog(`[System] Đã dừng bot và tắt tự động kết nối.`);
     }
 }
 
-function sendCommand(cmd, emitLog) {
-    if (bot) {
-        bot.chat(cmd);
-        emitLog(`[Terminal] Đã gửi: ${cmd}`);
-    } else {
-        emitLog(`[Lỗi] Bot chưa kết nối.`);
-    }
-}
-
-module.exports = { startBot, stopBot, sendCommand };
+module.exports = { startBot, stopBot };
