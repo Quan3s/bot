@@ -1,117 +1,97 @@
 const mineflayer = require('mineflayer');
 
 let bot = null;
-let chatTimeout = null;
-let actionInterval = null;
-let reconnectTimeout = null;
-let moveTimeout = null; // Quản lý thời gian giữ phím
+let timers = [];
+let autoReconnect = true;
 
-const chatMessages = [
+const chatMsgs = [
     "Chán quá ai đây không :((", "Đứng đây ngắm mây bay cả ngày rồi nè",
     "Server vắng quá, ai vào chơi với mình đi", "Bot AFK xin chào mọi người",
-    "Có ai online không nhỉ?", "Ngồi một mình thấy buồn quá",
-    "Mình vẫn ở đây này, đừng lo server die nhé", "Đếm block chơi cho đỡ buồn :))",
-    "Server hôm nay vắng tanh", "Ai đọc được thì vào chơi đi",
-    "Đang AFK nhưng vẫn để mắt tới server", "Hóng ai đó vào build cùng",
-    "Chỉ cần 1 người thôi, vào đi :(", "Mình là bot giữ server ấm nè",
-    "Có mình tôi với tôi thôi..."
+    "Mình vẫn ở đây này, đừng lo server die nhé", "Đang AFK nhưng vẫn để mắt tới server"
 ];
 
-function startBot(config, emitLog) {
-    clearAllTimers();
+function startBot(config, emitLog, onFinalExit) {
+    autoReconnect = true;
+    clearTimers();
+
     if (bot) { bot.quit(); bot = null; }
 
-    emitLog(`[System] Đang kết nối tới ${config.host}...`);
+    emitLog(`[Hệ thống] Đang kết nối tới ${config.host}...`);
 
     bot = mineflayer.createBot({
         host: config.host,
         port: parseInt(config.port),
         username: config.username,
         version: '1.20.1',
-        viewDistance: 2, 
-        checkTimeoutInterval: 90000 
+        viewDistance: 2, // Tối ưu RAM cho Render
+        checkTimeoutInterval: 60000
     });
 
-    // Tối ưu vật lý: Chỉ xử lý vật lý cho chính bot, bỏ qua các entity khác
-    bot.on('mount', () => { bot.physics.enabled = true; });
-
     bot.on('spawn', () => {
-        emitLog(`[Bot] Đã vào server và bắt đầu di chuyển giả lập.`);
+        emitLog(`[Bot] Đã vào server. Bắt đầu Anti-AFK.`);
         
+        // AuthMe
         setTimeout(() => {
             const cmd = config.isRegister ? `/register ${config.password} ${config.password}` : `/login ${config.password}`;
             bot.chat(cmd);
-            emitLog(`[AuthMe] Thực hiện lệnh: ${cmd}`);
         }, 3000);
 
-        startChatCycle(emitLog);
-        startActionCycle(); // Bao gồm nhảy, quay mặt và DI CHUYỂN
+        // Vòng lặp Anti-AFK (Di chuyển vật lý)
+        const afkTimer = setInterval(() => {
+            if (!bot || !bot.entity) return;
+            
+            const actions = ['forward', 'back', 'left', 'right'];
+            const move = actions[Math.floor(Math.random() * actions.length)];
+            
+            bot.setControlState(move, true);
+            if (Math.random() > 0.5) bot.setControlState('jump', true);
+
+            setTimeout(() => {
+                if (bot) bot.clearControlStates();
+            }, 1000);
+
+            // Quay mặt ngẫu nhiên
+            bot.look(Math.random() * 6, Math.random() * 2 - 1);
+        }, 15000); 
+
+        // Vòng lặp Chat
+        const chatTimer = setInterval(() => {
+            if (bot) bot.chat(chatMsgs[Math.floor(Math.random() * chatMsgs.length)]);
+        }, 120000);
+
+        timers.push(afkTimer, chatTimer);
     });
+
+    bot.on('kicked', (reason) => emitLog(`[Bị Kick] Lý do: ${reason}`));
+    
+    bot.on('error', (err) => emitLog(`[Lỗi] ${err.message}`));
 
     bot.on('end', (reason) => {
-        emitLog(`[System] Disconnect: ${reason}`);
-        clearAllTimers();
-        if (config.autoReconnect) {
-            reconnectTimeout = setTimeout(() => startBot(config, emitLog), 15000);
+        emitLog(`[Hệ thống] Mất kết nối: ${reason}`);
+        clearTimers();
+        
+        if (autoReconnect) {
+            emitLog(`[Hệ thống] Tự động kết nối lại sau 20 giây...`);
+            setTimeout(() => startBot(config, emitLog, onFinalExit), 20000);
+        } else {
+            onFinalExit();
         }
     });
-
-    bot.on('error', (err) => emitLog(`[Lỗi] ${err.message}`));
 }
 
-function startActionCycle() {
-    if (actionInterval) clearInterval(actionInterval);
-    
-    actionInterval = setInterval(() => {
-        if (!bot || !bot.entity) return;
-
-        // 1. Giả lập quay mặt (nhẹ)
-        const yaw = Math.random() * Math.PI * 2;
-        const pitch = (Math.random() - 0.5) * Math.PI;
-        bot.look(yaw, pitch, false);
-
-        // 2. Giả lập phím di chuyển (W, A, S, D)
-        const movements = ['forward', 'back', 'left', 'right'];
-        const randomMove = movements[Math.floor(Math.random() * movements.length)];
-        
-        // Nhấn phím
-        bot.setControlState(randomMove, true);
-        if (Math.random() > 0.7) bot.setControlState('jump', true); // Thỉnh thoảng nhảy khi đi
-
-        // Giữ phím trong 1-2 giây rồi thả ra để không đi quá xa
-        if (moveTimeout) clearTimeout(moveTimeout);
-        moveTimeout = setTimeout(() => {
-            if (bot) {
-                bot.clearControlStates(); // Thả tất cả phím
-            }
-        }, 1000 + Math.random() * 1000);
-
-    }, 10000 + Math.random() * 5000); // 10-15 giây thực hiện một chuỗi hành động
-}
-
-function startChatCycle(emitLog) {
-    if (chatTimeout) clearTimeout(chatTimeout);
-    const loop = () => {
-        const msg = chatMessages[Math.floor(Math.random() * chatMessages.length)];
-        if (bot && bot.entity) {
-            bot.chat(msg);
-            emitLog(`[Chat] ${msg}`);
-        }
-        chatTimeout = setTimeout(loop, 60000 + Math.random() * 120000);
-    };
-    chatTimeout = setTimeout(loop, 60000);
-}
-
-function clearAllTimers() {
-    if (chatTimeout) clearTimeout(chatTimeout);
-    if (actionInterval) clearInterval(actionInterval);
-    if (reconnectTimeout) clearTimeout(reconnectTimeout);
-    if (moveTimeout) clearTimeout(moveTimeout);
+function clearTimers() {
+    timers.forEach(t => clearInterval(t));
+    timers = [];
 }
 
 function stopBot(emitLog) {
-    clearAllTimers();
-    if (bot) { bot.quit(); bot = null; emitLog(`[System] Đã dừng bot.`); }
+    autoReconnect = false;
+    clearTimers();
+    if (bot) {
+        bot.quit();
+        bot = null;
+    }
+    emitLog("[Hệ thống] Đã dừng bot thủ công.");
 }
 
 module.exports = { startBot, stopBot };
