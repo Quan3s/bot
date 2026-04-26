@@ -1,11 +1,8 @@
 {
-  "name": "minecraft-afk-bot",
-  "version": "1.0.0",
-  "description": "Optimized Mineflayer Bot for Render.com",
+  "name": "mc-bot-render",
+  "version": "1.2.0",
   "main": "server.js",
-  "scripts": {
-    "start": "node server.js"
-  },
+  "scripts": { "start": "node server.js" },
   "dependencies": {
     "express": "^4.19.2",
     "mineflayer": "^4.20.1",
